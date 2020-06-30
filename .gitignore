@@ -1,0 +1,14 @@
+# node_modules
+node_modules
+
+# test package
+test
+
+# logs
+logs
+
+lib/connection-properties.js
+lib/auth-config.js
+
+# environment config
+.env
