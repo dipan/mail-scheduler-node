@@ -1,20 +1,19 @@
 const express = require('express');
 const ResponseStatus = require('../../ResponseStatus');
 const Logger = require('../../../com/Logger');
-const GetUserById = require('./GetScheduleById');
-const PatchUserIdPrivilege = require('./PatchUserIdPrivilege');
-const PutUser = require('./PutSchedule');
+const PutSchedule = require('./PutSchedule');
+const DeleteSchedule = require('./DeleteSchedule');
 
 const routerSchedule = express.Router();
 
-const PostUser = require('./PostSchedule');
-const GetUser = require('./GetSchedule');
+const PostSchedule = require('./PostSchedule');
+const GetSchedule = require('./GetSchedule');
 
 routerSchedule.route("/")
     .post(async (req, res) => {
         let apiResponse = null;
         try {
-            apiResponse = await new PostUser().execute(req);
+            apiResponse = await new PostSchedule().execute(req);
         } catch (error) {
             Logger.error(error);
             apiResponse = ResponseStatus.INTERNAL_SERVER_ERROR(error);
@@ -25,7 +24,7 @@ routerSchedule.route("/")
     .get(async (req, res) => {
         let apiResponse = null;
         try {
-            apiResponse = await new GetUser().execute(req);
+            apiResponse = await new GetSchedule().execute(req);
         } catch (error) {
             Logger.error(error);
             apiResponse = ResponseStatus.INTERNAL_SERVER_ERROR(error);
@@ -38,7 +37,7 @@ routerSchedule.route("/:scheduleId")
     .delete(async (req, res) => {
         let apiResponse = null;
         try {
-            apiResponse = await new GetUserById().execute(req);
+            apiResponse = await new DeleteSchedule().execute(req);
         } catch (error) {
             Logger.error(error);
             apiResponse = ResponseStatus.INTERNAL_SERVER_ERROR(error);
@@ -49,7 +48,7 @@ routerSchedule.route("/:scheduleId")
     .put(async (req, res) => {
         let apiResponse = null;
         try {
-            apiResponse = await new PutUser().execute(req);
+            apiResponse = await new PutSchedule().execute(req);
         } catch (error) {
             Logger.error(error);
             apiResponse = ResponseStatus.INTERNAL_SERVER_ERROR(error);

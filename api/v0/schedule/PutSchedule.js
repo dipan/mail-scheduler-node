@@ -1,11 +1,8 @@
 const uuidv5 = require('uuid/v5');
 const moment = require('moment');
 const ResponseStatus = require('../../ResponseStatus');
-const DbUtility = require('../../../mysql/DBUtility');
-const Utility = require('../../../utility/Utility');
-const UserAuthenticator = require('../../auth/UserAuthenticator');
-const NotificationUtility = require('../../../notification/NotificationUtility');
 const Logger = require('../../../com/Logger');
+const DbUtility = require('../../../utility/dbutility/DBUtility');
 
 class PutSchedule {
     execute(parameters) {
@@ -15,6 +12,7 @@ class PutSchedule {
                 let body = parameters.body;
 
                 // TODO code to update data to MongoDB
+                DbUtility.updateData("schedule", scheduleId, body);
                 AgendaUtil.scheduleMail(body.interval, body.jobName, body.data);
 
                 let response = {};

@@ -1,387 +1,307 @@
-const mysql = require('mysql2');
-const Logger = require('../../com/Logger');
+const MongoClient = require('mongodb').MongoClient;
+const Server = require('mongodb').Server;
 const Utility = require('../Utility');
-const connectionProperties = require('../../lib/connection-properties');
-const ClientError = require('../../api/v0/common/error/ClientError');
+const Logger = require('../../com/Logger');
 
 class DBUtility {
+
     constructor() {
-        this.host = connectionProperties.mysql.host;
-        this.user = connectionProperties.mysql.user;
-        this.password = connectionProperties.mysql.password;
-        this.database = connectionProperties.mysql.database;
-        this.connectionLimit = connectionProperties.mysql.connectionLimit;
-        this.queueLimit = connectionProperties.mysql.queueLimit;
-        this.pool = mysql.createPool({
-            host: this.host,
-            user: this.user,
-            password: this.password,
-            database: this.database,
-            waitForConnections: true,
-            connectionLimit: 20,
-            queueLimit: 100
-        });
-        this.dbUtility = undefined;
+        this.MongoClient = require('mongodb').MongoClient;
+        this.url = "mongodb://192.168.1.254:27017/db-schedule";
+        this.dbName = "bug-logs";
+        this.Server = require('mongodb').Server;
     }
 
-    static getConnectionPool() {
-        return DBUtility.getInstance().pool.promise();
-    }
-
-    static getInstance() {
-        if (this.dbUtility === undefined) {
-            this.dbUtility = new DBUtility();
-        }
-        return this.dbUtility;
-    }
-
-    static async getConnectionFromPool() {
-        let dbUtility = DBUtility.getInstance();
-        let poolPromise = this.getConnectionPool();
-
-        return await poolPromise.getConnection();
-    }
-
-    static async getConnection(database) {
-        let conn = mysql.createConnection({
-            host: connectionProperties.mysql.host,
-            user: connectionProperties.mysql.user,
-            password: connectionProperties.mysql.password,
-            database: database
-        });
-        return conn;
-    }
-
-    static getDataAsList(query, paramList = []) {
+    getMongoConnection() {
         return new Promise((resolve, reject) => {
-            getMySQLConnection()
-                .then((connection) => {
-                    try {
-                        let column = query.substring("SELECT".length, query.indexOf("FROM")).trim().split(",");
-                        if (column.length != 1) {
-                            throw new Error("Invalid query : getDataAsList() accepts query with single column");
-                        }
-                        connection.query(query, paramList, (error, results, fields) => {
-                            query = this.getActualQuery(query, paramList);
-                            if (error) {
-                                Logger.error("Query falied : " + query);
-                                reject(error);
-                            } else {
-                                let resultList = [];
-                                for (let row of results) {
-                                    resultList.push(row[fields[0].name]);
-                                }
-                                Logger.info("Query executed : " + query);
-                                resolve(resultList);
-                            }
-                        });
-                    } catch (error) {
-                        reject(error);
-                    } finally {
-                        connection.release((error) => {
-                            if (error) {
-                                Logger.error('Error ending connection : ' + err.stack);
-                            }
-                        });
-                    }
-                })
-                .catch((error) => {
-                    reject(error);
-                });
-        });
-    }
-
-    static getDataAsKeyValuePair(query, paramList = []) {
-        return new Promise((resolve, reject) => {
-            getMySQLConnection()
-                .then((connection) => {
-                    try {
-                        let columns = query.substring("SELECT".length, query.indexOf("FROM")).trim().split(",");
-                        if (columns.length != 2) {
-                            throw new Error("Invalid query : getDataAsKeyValuePair() accepts query with two columns");
-                        }
-                        connection.query(query, paramList, (error, results, fields) => {
-                            query = this.getActualQuery(query, paramList);
-                            if (error) {
-                                Logger.error("Query falied : " + query);
-                                reject(error);
-                            } else {
-                                let resultObject = {};
-                                for (let row of results) {
-                                    resultObject[row[fields[0].name]] = row[fields[1].name];
-                                }
-                                Logger.info("Query executed : " + query);
-                                resolve(resultObject);
-                            }
-                        });
-                    } catch (error) {
-                        reject(error);
-                    } finally {
-                        connection.release((error) => {
-                            if (error) {
-                                Logger.error('Error ending connection : ' + err.stack);
-                            }
-                        });
-                    }
-                })
-                .catch((error) => {
-                    reject(error);
-                });
-        });
-    }
-
-    static async getDataById(tableName, id, columns = "*") {
-        let query = "SELECT " + columns + " FROM " + tableName + " WHERE id = ?";
-        let paramList = [id];
-        return await this.executeQuery(query, paramList);
-    }
-
-    static async getDataWithFilter(tableName, columns = "*", filter = "", sortBy = "", sortOrder = "ASC", offset = 0, limit = 1000) {
-        offset = Number(offset);
-        if (Number.isNaN(offset)) {
-            throw new ClientError("Offset must be numeric");
-        }
-        limit = Number(limit);
-        if (Number.isNaN(limit)) {
-            throw new ClientError("Limit must be numeric");
-        }
-
-        let query = "SELECT " + columns + " FROM " + tableName + " ";
-        let paramList = [];
-
-        if (Utility.isStringNonEmpty(filter)) {
-            let parsedFilter = this.getParsedFilter(filter);
-            query += "WHERE " + parsedFilter.parsedFilter + " ";
-            paramList.push(...parsedFilter.paramList);
-        }
-
-        if (Utility.isStringNonEmpty(sortBy)) {
-            query += "ORDER BY " + tableName + "." + sortBy + " " + sortOrder.toUpperCase() + " ";
-        }
-        query += "LIMIT " + offset + ", " + limit;
-
-        return await this.executeQuery(query, paramList);
-    }
-
-    static async executeQuery(query, paramList = []) {
-        try {
-            let [rows, fields] = await DBUtility.getConnectionPool().query(query, paramList);
-            query = this.getActualQuery(query, paramList);
-            Logger.info("Query executed : " + query);
-            return rows;
-        } catch (error) {
-            query = this.getActualQuery(query, paramList);
-            Logger.error("Query falied : " + query);
-            throw error;
-        }
-    }
-
-    static getTableMetadata(tableName) {
-        return new Promise((resolve, reject) => {
-            getMySQLConnection()
-                .then((connection) => {
-                    try {
-                        let query = "SELECT * FROM " + tableName + " LIMIT 1";
-                        connection.execute(query, [], (error, results, fields) => {
-                            query = this.getActualQuery(query);
-                            if (error) {
-                                Logger.error("Query falied : " + query);
-                                reject(error);
-                            } else {
-                                Logger.info("Query executed : " + query);
-                                resolve(fields);
-                            }
-                            connection.release((error) => {
-                                if (error) {
-                                    Logger.error('Error ending connection : ' + err.stack);
-                                }
-                            });
-                        });
-                    } catch (error) {
-                        Logger.error(error);
-                        reject(error);
-                    }
-                })
-                .catch((error) => {
-                    Logger.error(error);
-                    reject(error);
-                });
-        });
-    }
-
-    static getDataAndMetadata(query, paramList = []) {
-        return new Promise((resolve, reject) => {
-            getMySQLConnection()
-                .then((connection) => {
-                    try {
-                        connection.query(query, paramList, (error, results, fields) => {
-                            query = this.getActualQuery(query, paramList);
-                            if (error) {
-                                Logger.error("Query falied : " + query);
-                                reject(error);
-                            } else {
-                                Logger.info("Query executed : " + query);
-                                resolve([results, fields]);
-                            }
-                            connection.release((error) => {
-                                if (error) {
-                                    Logger.error('Error ending connection : ' + err.stack);
-                                }
-                            });
-                        });
-                    } catch (error) {
-                        Logger.error(error);
-                        reject(error);
-                    }
-                })
-                .catch((error) => {
-                    Logger.error(error);
-                    reject(error);
-                });
-        });
-    }
-
-    static isIdExists(tableName, id) {
-        return new Promise((resolve, reject) => {
-            getMySQLConnection()
-                .then((connection) => {
-                    try {
-                        let query = "SELECT id FROM " + tableName + " WHERE id = ?";
-                        let paramList = [id];
-                        connection.query(query, paramList, (error, results) => {
-                            query = this.getActualQuery(query, paramList);
-                            if (error) {
-                                Logger.error("Query falied : " + query);
-                                reject(error);
-                            } else {
-                                Logger.info("Query executed : " + query);
-                                resolve(Boolean(results.length));
-                            }
-                            connection.release((error) => {
-                                if (error) {
-                                    Logger.error('Error ending connection : ' + err.stack);
-                                }
-                            });
-                        });
-                    } catch (error) {
-                        Logger.error(error);
-                        reject(error);
-                    }
-                })
-                .catch((error) => {
-                    Logger.error(error);
-                    reject(error);
-                });
-        });
-    }
-
-    static executeTransactionalQuery(connection, query, paramList = []) {
-        return new Promise((resolve, reject) => {
-            connection.query(query, paramList, (error, results) => {
-                query = this.getActualQuery(query, paramList);
-                if (error) {
-                    Logger.error("Query falied : " + query);
-                    reject(error);
-                } else {
-                    Logger.info("Query executed : " + query);
-                    resolve(results);
-                }
+            console.log("Connecting to MongoDB...");
+            MongoClient.connect(this.url, function (err, db) {
+                if (err) throw err;
+                var dbo = db.db("mydb");
+                resolve(dbo);
+                console.log("Connected to MongoDB...");
             });
+        })
+    }
+
+    insertData(collectionName, data) {
+        return new Promise((resolve, reject) => {
+            this.getMongoConnection()
+                .then((mongoDBConnection) => {
+                    let db = mongoDBConnection.db(this.dbName);
+                    let collection = db.collection(collectionName);
+                    collection.insertOne(data, (error, result) => {
+                        let query = "db.getCollection(\"" + collectionName + "\").insert(" +
+                            JSON.stringify(data, null, 0) +
+                            ")";
+                        if (error) {
+                            Logger.error("Failed to execut query : " + query);
+                            Logger.error(error);
+                            reject(error);
+                        } else {
+                            console.log(result);
+                            Logger.info("Successfully executed query : " + query);
+                            resolve(result);
+                        }
+                    });
+                    mongoDBConnection.close();
+                }).catch((error) => {
+                    Logger.error("Error while inserting data : ");
+                    Logger.error(error);
+                    reject(error);
+                });
+        });
+
+    }
+
+    getData(collectionName, filter = "", projection = "") {
+        return new Promise((resolve, reject) => {
+            this.getMongoConnection()
+                .then((mongoDBConnection) => {
+                    try {
+                        let db = mongoDBConnection.db(this.dbName);
+                        let collection = db.collection(collectionName);
+                        if (Utility.isStringNonEmpty(filter)) {
+                            try {
+                                filter = this.getParsedFilter(filter);
+                            } catch (error) {
+                                throw error;
+                            }
+                        } else {
+                            filter = {};
+                        }
+                        let projectionExpn = new Object();
+                        if (Utility.isStringNonEmpty(projection)) {
+                            projection = projection.split(",");
+                            for (let expn of projection) {
+                                projectionExpn[expn.trim()] = 1;
+                            }
+                        }
+                        projection = {
+                            projection: projectionExpn
+                        }
+                        collection.find(filter, projection).toArray((error, docs) => {
+                            let query = "db.getCollection(\"" + collectionName + "\").find(" +
+                                JSON.stringify(filter, null, 0) +
+                                ").pretty()";
+                            if (error) {
+                                Logger.error("Failed to execut query : " + query);
+                                Logger.error(error);
+                                reject(error);
+                            } else {
+                                Logger.info("Successfully executed query : " + query);
+                                resolve(docs);
+                            }
+                        });
+                    } catch (error) {
+                        Logger.error(error);
+                        reject(error);
+                    }
+                    mongoDBConnection.close();
+                })
+                .catch((error) => {
+                    Logger.error("Error while finding data : ");
+                    Logger.error(error);
+                    reject(error);
+                });
         });
     }
 
-    // Filter expression format : column co word1+word2 and/or column co word1+word2
-    static getParsedFilter(filter) {
+    getDataById(collectionName, id, projection = "") {
+        return new Promise((resolve, reject) => {
+            this.getMongoConnection()
+                .then((mongoDBConnection) => {
+                    try {
+                        let db = mongoDBConnection.db(this.dbName);
+                        let collection = db.collection(collectionName);
+                        let filter = {
+                            _id: id
+                        };
+                        let projectionExpn = new Object();
+                        if (Utility.isStringNonEmpty(projection)) {
+                            projection = projection.split(",");
+                            projectionExpn["_id"] = 0;
+                            for (let expn of projection) {
+                                projectionExpn[expn.trim()] = 1;
+                            }
+                        }
+                        projection = {
+                            projection: projectionExpn
+                        }
+
+                        collection.findOne(filter, projection, (error, item) => {
+                            let query = "db.getCollection(\"" + collectionName + "\").find(" +
+                                JSON.stringify(filter, null, 0) +
+                                ", " +
+                                JSON.stringify(projectionExpn, null, 0) +
+                                ").pretty()";
+                            if (error) {
+                                Logger.error("Failed to execut query : " + query);
+                                Logger.error(error);
+                                reject(error);
+                            } else {
+                                Logger.info("Successfully executed query : " + query);
+                                resolve(item);
+                            }
+                        });
+                    } catch (error) {
+                        Logger.error(error);
+                        reject(error);
+                    }
+                    mongoDBConnection.close();
+                })
+                .catch((error) => {
+                    Logger.error("Error while finding data by id : ");
+                    Logger.error(error);
+                    reject(error);
+                });
+        });
+    }
+
+    updateData(collectionName, id, data) {
+        return new Promise((resolve, reject) => {
+            this.getMongoConnection()
+                .then((mongoDBConnection) => {
+                    let db = mongoDBConnection.db(this.dbName);
+                    let collection = db.collection(collectionName);
+                    let filter = {
+                        _id: id
+                    };
+                    data = {
+                        $set: data
+                    }
+                    collection.updateOne(filter, data, (error, item) => {
+                        let query = "db.getCollection(\"" + collectionName + "\").update(" +
+                            JSON.stringify(filter, null, 0) +
+                            ", " +
+                            JSON.stringify(data, null, 0) +
+                            ")";
+                        if (error) {
+                            Logger.error("Failed to execut query : " + query);
+                            Logger.error(error);
+                            reject(error);
+                        } else {
+                            Logger.info("Successfully executed query : " + query);
+                            resolve(item);
+                        }
+                    })
+                    mongoDBConnection.close();
+                })
+                .catch((error) => {
+                    Logger.error("Error while updating data : ");
+                    Logger.error(error);
+                    reject(error);
+                });
+        });
+    }
+
+    updateMany(collectionName, data) {
+        return new Promise((resolve, reject) => {
+            this.getMongoConnection()
+                .then((mongoDBConnection) => {
+                    let db = mongoDBConnection.db(this.dbName);
+                    let collection = db.collection(collectionName);
+                    let filter = {};
+                    data = {
+                        $set: data
+                    }
+                    collection.updateMany(filter, data, (error, item) => {
+                        let query = "db.getCollection(\"" + collectionName + "\").updateMany(" +
+                            JSON.stringify(filter, null, 0) +
+                            ", " +
+                            JSON.stringify(data, null, 0) +
+                            ")";
+                        if (error) {
+                            Logger.error("Failed to execut query : " + query);
+                            Logger.error(error);
+                            reject(error);
+                        } else {
+                            Logger.info("Successfully executed query : " + query);
+                            resolve(item);
+                        }
+                    })
+                    mongoDBConnection.close();
+                })
+                .catch((error) => {
+                    Logger.error("Error while updating multiple data : ");
+                    Logger.error(error);
+                    reject(error);
+                });
+        });
+    }
+
+    deleteOne(collectionName, id, data) {
+        return new Promise((resolve, reject) => {
+            this.getMongoConnection()
+                .then((mongoDBConnection) => {
+                    let db = mongoDBConnection.db(this.dbName);
+                    let collection = db.collection(collectionName);
+                    let filter = {
+                        _id: id
+                    };
+                    data = {
+                        $set: data
+                    }
+                    collection.deleteOne(data, (error, item) => {
+                        let query = "db.getCollection(\"" + collectionName + "\").deleteOne(" +
+                            JSON.stringify(filter, null, 0) +
+                            ", " +
+                            JSON.stringify(data, null, 0) +
+                            ")";
+                        if (error) {
+                            Logger.error("Failed to execut query : " + query);
+                            Logger.error(error);
+                            reject(error);
+                        } else {
+                            Logger.info("Successfully executed query : " + query);
+                            resolve(item);
+                        }
+                    })
+                    mongoDBConnection.close();
+                })
+                .catch((error) => {
+                    Logger.error("Error while updating multiple data : ");
+                    Logger.error(error);
+                    reject(error);
+                });
+        });
+    }
+
+    getParsedFilter(filter) {
         filter = filter.trim();
-        let parsedFilter = "";
-        let parsedIndex = 0;
-        let paramList = [];
-        while (parsedIndex < filter.length) {
-            let andIndex = filter.indexOf(" and ", parsedIndex);
-            let orIndex = filter.indexOf(" or ", parsedIndex);
-            let eachFilterExpn;
-            let condition = "";
-            if (andIndex > 0 && (orIndex === -1 || andIndex < orIndex)) {
-                eachFilterExpn = filter.substring(parsedIndex, andIndex);
-                condition = " and ";
-                parsedIndex += eachFilterExpn.length + condition.length;
-            } else if (orIndex > 0 && (andIndex === -1 || orIndex < andIndex)) {
-                eachFilterExpn = filter.substring(parsedIndex, orIndex);
-                condition = " or ";
-                parsedIndex += eachFilterExpn.length + condition.length;
-            } else {
-                eachFilterExpn = filter.substring(parsedIndex, filter.length);
-                parsedIndex += filter.length;
+        let parsedFilter = new Object();
+        let orIndex = -1;
+        let andIndex = -1;
+
+
+        let singleFilter = filter;
+        let firstSpace = singleFilter.indexOf(" ");
+        let secondSpace = singleFilter.indexOf(" ", firstSpace + 1);
+
+        let field = singleFilter.substring(0, firstSpace);
+        let condition = "$" + singleFilter.substring(firstSpace + 1, secondSpace);
+        let value = singleFilter.substring(secondSpace + 1);
+        if (value[0] === "'" && value[value.length - 1] === "'") {
+            value = value.substring(1, value.length - 1)
+        } else {
+            value = Number(value);
+            if (Number.isNaN(value)) {
+                throw new Error("Invalid filter expression : " + filter);
             }
-
-            Logger.debug('eachFilterExpn: ', eachFilterExpn);
-            eachFilterExpn = eachFilterExpn.split(" ");
-            let clientError = new ClientError("Invalid filter expression : " +
-                eachFilterExpn.toString().replace(/,/g, " "));
-            if (eachFilterExpn.length !== 3) {
-                throw clientError;
-            }
-
-            eachFilterExpn[2] = eachFilterExpn[2].replace(/\+/g, " ");
-            switch (eachFilterExpn[1]) {
-                case "co":  //contains
-                    eachFilterExpn[0] = "UPPER(" + eachFilterExpn[0] + ")";
-                    eachFilterExpn[1] = "LIKE";
-                    paramList.push("%" + eachFilterExpn[2] + "%");
-                    break;
-                case "sw":  //starts with
-                    eachFilterExpn[0] = "UPPER(" + eachFilterExpn[0] + ")";
-                    eachFilterExpn[1] = "LIKE";
-                    paramList.push(eachFilterExpn[2] + "%");
-                    break;
-                case "ew":  //ends with
-                    eachFilterExpn[0] = "UPPER(" + eachFilterExpn[0] + ")";
-                    eachFilterExpn[1] = "LIKE";
-                    paramList.push("%" + eachFilterExpn[2]);
-                    break;
-                case "gt":
-                    eachFilterExpn[1] = ">";
-                    paramList.push(eachFilterExpn[2]);
-                    break;
-                case "ge":
-                    eachFilterExpn[1] = ">=";
-                    paramList.push(eachFilterExpn[2]);
-                    break;
-                case "lt":
-                    eachFilterExpn[1] = "<";
-                    paramList.push(eachFilterExpn[2]);
-                    break;
-                case "le": eachFilterExpn[1] = "<=";
-                    paramList.push(eachFilterExpn[2]);
-                    break;
-                case "eq": eachFilterExpn[1] = "=";
-                    paramList.push(eachFilterExpn[2]);
-                    break;
-                default: throw clientError;
-            }
-            eachFilterExpn[2] = "?";
-
-            eachFilterExpn = eachFilterExpn.toString().replace(/,/g, " ").replace(/\+/g, " ");
-
-            parsedFilter += eachFilterExpn + condition.toUpperCase();
         }
-        let parsedData = {
-            parsedFilter: parsedFilter,
-            paramList: paramList
-        };
-        return parsedData;
+
+        singleFilter = {};
+        singleFilter[condition] = value;
+        parsedFilter[field] = singleFilter;
+
+        // switch (condition) {
+        //     case "eq": parsedFilter[field] = value;
+        //         break;
+        // }
+
+        return parsedFilter;
     }
 
-    static getActualQuery(query, paramList = []) {
-        query = query.replace("\n", "");
-        for (let eachParam of paramList) {
-            if (typeof eachParam === "string") {
-                eachParam = "'" + eachParam + "'";
-            }
-            query = query.replace("?", eachParam);
-        }
-        return query;
-    }
 }
 
 module.exports = DBUtility;

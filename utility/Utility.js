@@ -1,5 +1,4 @@
 const moment = require('moment');
-const RandExp = require('randexp');
 const fs = require('fs');
 const Logger = require('../com/Logger');
 const nodemailer = require('nodemailer');
@@ -24,16 +23,6 @@ class Utility {
     static isTrue(value) {
         let truePattern = /^((t(rue)?)|(y(es)?)|(\+?-?[1-9]+))$/i;
         return truePattern.test(String(value));
-    }
-
-    static generateOtp(noOfDigits = 6) {
-        return (Math.random().toString().substr(2, noOfDigits));
-    }
-
-    static getMaskedString(value, start, end, maskCharacter = 'X') {
-        let subStrLen = end - start;
-        let reqRegex = new RegExp(maskCharacter + "{" + subStrLen + "}");
-        return value.replace(value.substr(start, subStrLen), new RandExp(reqRegex).gen());
     }
 
     static getPlaceHolder(size) {
